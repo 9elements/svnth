@@ -15,10 +15,15 @@ const CHANNELS: i32 = 2;
 const SAMPLE_RATE: f64 = 44_100.0;
 const FRAMES_PER_BUFFER: u32 = 64;
 
+pub struct Voice {
+  note: u8,
+  frequency: f32
+}
+
 pub struct AppState {
-  frequency: f32,
   amp: f32,
-  to_amp: f32
+  to_amp: f32,
+  voices: Vec<Voice>
 }
 
 fn main() {
@@ -33,7 +38,7 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     let mut input = String::new();
     let app_state_arc = Arc::new(RwLock::new(AppState {
-      frequency: 440.0,
+      voices: Vec::new(),
       amp: 0.0,
       to_amp: 0.0
     }));
@@ -79,20 +84,26 @@ fn run() -> Result<(), Box<dyn Error>> {
         if message[0] >> 4 == 0b1001 {
           println!("NOTE ON");
           println!("{} (v={})", message[1], message[2]);
-          let m = 0.00 + message[1] as f32;
+          let voice = Voice {
+            note: message[1],
+            frequency: 440.0 * (2.0 as f32).powf((message[1] as f32 - 69.0) / 12.0)
+          };
 
           // let mut _app_state = _app_state_reference.write().unwrap();
           // *_app_state.amp = 1.0;
           // *_app_state.to_amp = 1.0;
           // *_app_state.frequency = 440.0 * (2.0 as f32).powf((m - 69.0) / 12.0);
-          app_state.to_amp = 1.0;
-          app_state.frequency = 440.0 * (2.0 as f32).powf((m - 69.0) / 12.0);
-          println!("{} {}", m, app_state.amp);
+          //app_state.frequency = 440.0 * (2.0 as f32).powf((m - 69.0) / 12.0);
+          println!("{} {}", voice.note, app_state.amp);
           println!("{}", app_state.amp);
+
+          app_state.voices.push(voice);
+          app_state.to_amp = 1.0;
         }
         if message[0] >> 4 == 0b1000 {
           // let mut _app_state = _app_state_reference.write().unwrap();
-          app_state.to_amp = 0.0;
+          app_state.voices.retain(|voice| voice.note != message[1]);
+          app_state.to_amp = 1.0;
           println!("NOTE OFF");
           println!("{} (v={})", message[1], message[2]);
         }
@@ -122,14 +133,18 @@ fn run() -> Result<(), Box<dyn Error>> {
 
         let mut idx = 0;
         for _ in 0..frames {
-
             let a = app_state.amp;
-            let sm = app_state.frequency;
+            let mut signal = 0.0;
 
-            let s = (time as f64 * sm as f64 * PI * 2.0).sin() as f32 * a;
+            for voice in &app_state.voices {
+              let sm = voice.frequency;
+              let s = (time as f64 * sm as f64 * PI * 2.0).sin() as f32 * a;
 
-            buffer[idx] = s;
-            buffer[idx + 1] = s;
+              signal = (signal + s) - (signal * s);
+            }
+
+            buffer[idx] = signal;
+            buffer[idx + 1] = signal;
 
             app_state.amp = app_state.amp + (app_state.to_amp - app_state.amp) / 64.0;
 
