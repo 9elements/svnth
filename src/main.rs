@@ -140,7 +140,7 @@ fn run() -> Result<(), Box<dyn Error>> {
               let sm = voice.frequency;
               let s = (time as f64 * sm as f64 * PI * 2.0).sin() as f32 * a;
 
-              signal = (signal + s) - (signal * s);
+              signal = signal + s;
             }
 
             buffer[idx] = signal;
