@@ -15,6 +15,71 @@ const CHANNELS: i32 = 2;
 const SAMPLE_RATE: f64 = 44_100.0;
 const FRAMES_PER_BUFFER: u32 = 64;
 
+pub struct VCF {
+  cutoff_frequency: f32,
+  resonance: f32,
+  modulation_volume: f32,
+
+  q: f32,
+
+  a0: f32,
+  a1: f32,
+  a2: f32,
+  b0_b2: f32,
+  b1: f32,
+
+  x1: f32,
+  x2: f32,
+  y0: f32,
+  y1: f32,
+  y2: f32
+}
+
+impl VCF {
+  fn set_cutoff_frequency(&mut self, percent: f32) {
+    self.cutoff_frequency = percent;
+  }
+
+  fn set_resonance_frequencey(&mut self, percent: f32) {
+    self.resonance = percent;
+    self.q = 1.0;
+    //m_Q = expf (LOG_SQRT2 * (m_fResonance - 100.0/5.0) / (100.0/5.0));
+  }
+
+  fn calculate_coefficients(&mut self, cutoff_frequency: f32) {
+    let max_freq = 20000 as f32;
+    let log_2 = 0.69314718;
+    let f0 = (log_2 * (cutoff_frequency-100.0) / 10.0).exp() * max_freq;
+
+    let w0 = 2.0 * PI as f32 * f0 / SAMPLE_RATE as f32;
+    let alpha = w0.sin() / (2.0*self.q);
+    let cos_w0 = w0.cos();
+
+    self.a0 =  1.0 + alpha;
+    self.a1 = -2.0 * cos_w0;
+    self.a2 =  1.0 - alpha;
+    self.b1 =  1.0 - cos_w0;
+    self.b0_b2 = self.b1 / 2.0;
+  }
+
+  fn next_sample(&mut self, input: f32) {
+    self.calculate_coefficients(self.cutoff_frequency);
+    let x0 = input;
+
+    self.y0 = (self.b0_b2 * x0 + self.b1 * self.x1 + self.b0_b2 * self.x2 - self.a1*self.y1 - self.a2 * self.y2) / self.a0;
+    //m_Y0 =  (m_B0_B2*X0      + m_B1*m_X1         + m_B0_B2*m_X2         - m_A1*m_Y1       - m_A2*m_Y2        ) / m_A0;
+
+    self.x2 = self.x1;
+    self.y2 = self.y1;
+    self.x1 = x0;
+    self.y1 = self.y0;
+  }
+
+  fn get_output(&mut self) -> f32 {
+    return self.y0;
+  }
+}
+
 pub struct Voice {
   note: u8,
   frequency: f32
@@ -23,6 +88,12 @@ pub struct Voice {
 pub struct AppState {
   amp: f32,
   to_amp: f32,
+  signal: f32,
+  controller_1: f32,
+  controller_2: f32,
+  controller_3: f32,
+  controller_4: f32,
+  previous_signal: f32,
   voices: Vec<Voice>
 }
 
@@ -40,7 +111,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     let app_state_arc = Arc::new(RwLock::new(AppState {
       voices: Vec::new(),
       amp: 0.0,
-      to_amp: 0.0
+      to_amp: 0.0,
+      signal: 0.0,
+      controller_1: 0.0,
+      controller_2: 0.0,
+      controller_3: 0.0,
+      controller_4: 0.0,
+      previous_signal: 0.0
     }));
 
     // let app_state = Arc::new(RwLock::new(AppState {
@@ -76,10 +153,29 @@ fn run() -> Result<(), Box<dyn Error>> {
     let _in_port_name = midi_in.port_name(in_port)?;
 
     // let mut _app_state_reference = app_state.clone();
+
     let app_state_clone = app_state_arc.clone();
     let _conn_in = midi_in.connect(in_port, "midir-read-input", move |_stamp, message, _| {
+      println!("{}", message[0]);
+
+      let mut app_state = app_state_clone.write().unwrap();
+      if message[0] == 176 {
+        if message[1] == 1 {
+          app_state.controller_1 = message[2] as f32 / 127.0;
+        }
+        if message[1] == 2 {
+          app_state.controller_2 = message[2] as f32 / 127.0;
+        }
+        if message[1] == 3 {
+          app_state.controller_3 = message[2] as f32 / 127.0;
+        }
+        if message[1] == 4 {
+          app_state.controller_4 = message[2] as f32 / 127.0;
+        }
+      }
+
       if message.len() > 0 {
-        let mut app_state = app_state_clone.write().unwrap();
+
 
         if message[0] >> 4 == 0b1001 {
           println!("NOTE ON");
@@ -127,6 +223,25 @@ fn run() -> Result<(), Box<dyn Error>> {
     // This routine will be called by the PortAudio engine when audio is needed. It may called at
     // interrupt level on some machines so don't do anything that could mess up the system like
     // dynamic resource allocation or IO.
+    let mut filter = VCF {
+      cutoff_frequency: 50.0,
+      resonance: 1.0,
+      modulation_volume: 1.0,
+
+      q: 1.0,
+
+      a0: 1.0,
+      a1: 1.0,
+      a2: 1.0,
+      b0_b2: 1.0,
+      b1: 1.0,
+
+      x1: 1.0,
+      x2: 1.0,
+      y0: 1.0,
+      y1: 1.0,
+      y2: 1.0
+    };
 
     let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
         let mut app_state = app_state_arc.write().unwrap();
@@ -134,18 +249,57 @@ fn run() -> Result<(), Box<dyn Error>> {
         let mut idx = 0;
         for _ in 0..frames {
             let a = app_state.amp;
+            let previous_signal = app_state.previous_signal;
             let mut signal = 0.0;
 
             for voice in &app_state.voices {
               let sm = voice.frequency;
-              let s = (time as f64 * sm as f64 * PI * 2.0).sin() as f32 * a;
+              let mut s = 0.0;
+              if (time as f64 * sm as f64 * PI * 2.0).sin() as f32 * a > 0.0 {
+                s = 1.0;
+              } else {
+                s = -1.0;
+              }
 
-              signal = signal + s;
+//              let s = (time as f64 * sm as f64 * PI * 2.0).sin() as f32 * a;
+
+              signal += s;
             }
 
-            buffer[idx] = signal;
-            buffer[idx + 1] = signal;
+            // let max_freq = (500.0 * app_state.controller_1) as f64;
+            // let lfo = (50.0 * app_state.controller_2) as f64;
 
+            // let freq = (time as f64 * lfo * PI * 2.0).sin() * max_freq / 2.0 + max_freq / 2.0;
+            // let rc = 1.0/(freq as f32 * 2.0 * 3.14);
+            // let dt = 1.0/SAMPLE_RATE as f32;
+            // let alpha = dt/(rc+dt);
+            // signal = previous_signal + (alpha * (signal - previous_signal));
+
+
+// double RC = 1.0/(CUTOFF*2*3.14);
+//     double dt = 1.0/SAMPLE_RATE;
+//     double alpha = dt/(RC+dt);
+//     output[0] = input[0]
+//     for(int i = 1; i < points; ++i)
+//     {
+//         output[i] = output[i-1] + (alpha*(input[i] - output[i-1]));
+//     }
+
+            let cutoff_value = (100.0 * app_state.controller_1) as f64;
+            let lfo = (50.0 * app_state.controller_2) as f64;
+            let freq = (time as f64 * lfo * PI * 2.0).sin() * cutoff_value / 2.0 + cutoff_value / 2.0;
+
+            filter.set_cutoff_frequency(freq as f32);
+            filter.set_resonance_frequencey(1.0);
+            filter.next_sample(signal);
+            signal = filter.get_output();
+
+            app_state.signal = signal;
+
+            buffer[idx] = app_state.signal;
+            buffer[idx + 1] = app_state.signal;
+
+            app_state.previous_signal = app_state.signal;
             app_state.amp = app_state.amp + (app_state.to_amp - app_state.amp) / 64.0;
 
             idx += 2;
