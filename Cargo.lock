@@ -176,7 +176,7 @@ version = "0.1.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
-name = "synde"
+name = "svnth"
 version = "0.1.0"
 dependencies = [
  "midir 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
