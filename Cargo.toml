@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 midir = "0.5"
 portaudio = "0.7.0"
+minifb = "0.12"

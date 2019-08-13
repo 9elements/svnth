@@ -6,14 +6,20 @@ use portaudio as pa;
 
 use midir::{MidiInput, Ignore};
 
+use minifb::{Key, KeyRepeat, WindowOptions, Window};
+
 // Currently supports i8, i32, f32.
 pub type AudioSample = f32;
 pub type Input = AudioSample;
 pub type Output = AudioSample;
 
+
 const CHANNELS: i32 = 2;
 const SAMPLE_RATE: f64 = 44_100.0;
 const FRAMES_PER_BUFFER: u32 = 64;
+
+const WIDTH: usize = 640;
+const HEIGHT: usize = 360;
 
 pub struct VCF {
   cutoff_frequency: f32,
@@ -251,8 +257,9 @@ fn run() -> Result<(), Box<dyn Error>> {
       y2: 1.0
     };
 
+    let app_state_clone = app_state_arc.clone();
     let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
-        let mut app_state = app_state_arc.write().unwrap();
+        let mut app_state = app_state_clone.write().unwrap();
 
         let mut idx = 0;
         for _ in 0..frames {
@@ -321,8 +328,61 @@ fn run() -> Result<(), Box<dyn Error>> {
     stream.start()?;
     println!("Playing sound");
 
-    input.clear();
-    stdin().read_line(&mut input)?; // wait for next enter key press
+    // input.clear();
+    // stdin().read_line(&mut input)?; // wait for next enter key press
+
+    let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
+
+    let mut window = Window::new("Test - ESC to exit",
+                                  WIDTH,
+                                  HEIGHT,
+                                  WindowOptions::default()).unwrap_or_else(|e| {
+      panic!("{}", e);
+    });
+
+    while window.is_open() && !window.is_key_down(Key::Escape) {
+      if window.is_key_released(Key::A) {
+        let mut app_state = app_state_arc.write().unwrap();
+
+        app_state.voices.retain(|voice| voice.note != 50);
+        app_state.to_amp = 1.0;
+      }
+      if window.is_key_pressed(Key::A, KeyRepeat::No) {
+        let mut app_state = app_state_arc.write().unwrap();
+        let voice = Voice {
+          note: 50,
+          frequency: 440.0 * (2.0 as f32).powf((50.0 - 69.0) / 12.0)
+        };
+
+        app_state.voices.push(voice);
+        app_state.to_amp = 1.0;
+
+      }
+      if window.is_key_released(Key::S) {
+        let mut app_state = app_state_arc.write().unwrap();
+
+        app_state.voices.retain(|voice| voice.note != 52);
+        app_state.to_amp = 1.0;
+      }
+      if window.is_key_pressed(Key::S, KeyRepeat::No) {
+        let mut app_state = app_state_arc.write().unwrap();
+        let voice = Voice {
+          note: 52,
+          frequency: 440.0 * (2.0 as f32).powf((52.0 - 69.0) / 12.0)
+        };
+
+        app_state.voices.push(voice);
+        app_state.to_amp = 1.0;
+
+      }
+
+      for i in buffer.iter_mut() {
+        *i = 0; // write something more funny here!
+      }
+
+      // We unwrap here as we want this code to exit if it fails. Real applications may want to handle this in a different way
+      window.update_with_buffer(&buffer).unwrap();
+    }
 
     println!("Closing connection");
 
