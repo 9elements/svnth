@@ -130,81 +130,89 @@ fn run() -> Result<(), Box<dyn Error>> {
     midi_in.ignore(Ignore::None);
 
     // Get an input port (read from console if multiple are available)
+    let has_midi;
     let in_port = match midi_in.port_count() {
-        0 => return Err("no input port found".into()),
+        0 => {
+          has_midi = false;
+          0
+        },
         1 => {
-            println!("Choosing the only available input port: {}", midi_in.port_name(0).unwrap());
-            0
+          has_midi = true;
+          println!("Choosing the only available input port: {}", midi_in.port_name(0).unwrap());
+          0
         },
         _ => {
-            println!("\nAvailable input ports:");
-            for i in 0..midi_in.port_count() {
-                println!("{}: {}", i, midi_in.port_name(i).unwrap());
-            }
-            print!("Please select input port: ");
-            stdout().flush()?;
-            let mut input = String::new();
-            stdin().read_line(&mut input)?;
-            input.trim().parse()?
+          has_midi = true;
+          println!("\nAvailable input ports:");
+          for i in 0..midi_in.port_count() {
+              println!("{}: {}", i, midi_in.port_name(i).unwrap());
+          }
+          print!("Please select input port: ");
+          stdout().flush()?;
+          let mut input = String::new();
+          stdin().read_line(&mut input)?;
+          input.trim().parse()?
         }
     };
 
-    println!("\nOpening connection");
-    let _in_port_name = midi_in.port_name(in_port)?;
+    if has_midi {
+      println!("\nOpening connection");
+      let _in_port_name = midi_in.port_name(in_port)?;
 
-    // let mut _app_state_reference = app_state.clone();
+      // let mut _app_state_reference = app_state.clone();
 
-    let app_state_clone = app_state_arc.clone();
-    let _conn_in = midi_in.connect(in_port, "midir-read-input", move |_stamp, message, _| {
-      println!("{}", message[0]);
+      let app_state_clone = app_state_arc.clone();
+      let _conn_in = midi_in.connect(in_port, "midir-read-input", move |_stamp, message, _| {
+        println!("{}", message[0]);
 
-      let mut app_state = app_state_clone.write().unwrap();
-      if message[0] == 176 {
-        if message[1] == 1 {
-          app_state.controller_1 = message[2] as f32 / 127.0;
+        let mut app_state = app_state_clone.write().unwrap();
+        if message[0] == 176 {
+          if message[1] == 1 {
+            app_state.controller_1 = message[2] as f32 / 127.0;
+          }
+          if message[1] == 2 {
+            app_state.controller_2 = message[2] as f32 / 127.0;
+          }
+          if message[1] == 3 {
+            app_state.controller_3 = message[2] as f32 / 127.0;
+          }
+          if message[1] == 4 {
+            app_state.controller_4 = message[2] as f32 / 127.0;
+          }
         }
-        if message[1] == 2 {
-          app_state.controller_2 = message[2] as f32 / 127.0;
-        }
-        if message[1] == 3 {
-          app_state.controller_3 = message[2] as f32 / 127.0;
-        }
-        if message[1] == 4 {
-          app_state.controller_4 = message[2] as f32 / 127.0;
-        }
-      }
 
-      if message.len() > 0 {
+        if message.len() > 0 {
 
 
-        if message[0] >> 4 == 0b1001 {
-          println!("NOTE ON");
-          println!("{} (v={})", message[1], message[2]);
-          let voice = Voice {
-            note: message[1],
-            frequency: 440.0 * (2.0 as f32).powf((message[1] as f32 - 69.0) / 12.0)
-          };
+          if message[0] >> 4 == 0b1001 {
+            println!("NOTE ON");
+            println!("{} (v={})", message[1], message[2]);
+            let voice = Voice {
+              note: message[1],
+              frequency: 440.0 * (2.0 as f32).powf((message[1] as f32 - 69.0) / 12.0)
+            };
 
-          // let mut _app_state = _app_state_reference.write().unwrap();
-          // *_app_state.amp = 1.0;
-          // *_app_state.to_amp = 1.0;
-          // *_app_state.frequency = 440.0 * (2.0 as f32).powf((m - 69.0) / 12.0);
-          //app_state.frequency = 440.0 * (2.0 as f32).powf((m - 69.0) / 12.0);
-          println!("{} {}", voice.note, app_state.amp);
-          println!("{}", app_state.amp);
+            // let mut _app_state = _app_state_reference.write().unwrap();
+            // *_app_state.amp = 1.0;
+            // *_app_state.to_amp = 1.0;
+            // *_app_state.frequency = 440.0 * (2.0 as f32).powf((m - 69.0) / 12.0);
+            //app_state.frequency = 440.0 * (2.0 as f32).powf((m - 69.0) / 12.0);
+            println!("{} {}", voice.note, app_state.amp);
+            println!("{}", app_state.amp);
 
-          app_state.voices.push(voice);
-          app_state.to_amp = 1.0;
+            app_state.voices.push(voice);
+            app_state.to_amp = 1.0;
+          }
+          if message[0] >> 4 == 0b1000 {
+            // let mut _app_state = _app_state_reference.write().unwrap();
+            app_state.voices.retain(|voice| voice.note != message[1]);
+            app_state.to_amp = 1.0;
+            println!("NOTE OFF");
+            println!("{} (v={})", message[1], message[2]);
+          }
         }
-        if message[0] >> 4 == 0b1000 {
-          // let mut _app_state = _app_state_reference.write().unwrap();
-          app_state.voices.retain(|voice| voice.note != message[1]);
-          app_state.to_amp = 1.0;
-          println!("NOTE OFF");
-          println!("{} (v={})", message[1], message[2]);
-        }
-      }
-    }, ())?;
+      }, ())?;
+    }
 
     println!(
         "PortAudio Test: output sawtooth wave. SR = {}, BufSize = {}",
